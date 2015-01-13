@@ -32,15 +32,19 @@ module Kitchen
 
       default_config :salt_version, "latest"
 
-      # supported install methods: bootstrap|apt
+      # supported install methods: bootstrap|apt|yum
       default_config :salt_install, "bootstrap"
 
       default_config :salt_bootstrap_url, "http://bootstrap.saltstack.org"
       default_config :salt_bootstrap_options, ""
 
-      # alternative method of installing salt
+      # alternative method of installing salt (apt)
       default_config :salt_apt_repo, "http://apt.mccartney.ie"
       default_config :salt_apt_repo_key, "http://apt.mccartney.ie/KEY"
+
+      # alternative method of installing salt (yum)
+      default_config :salt_yum_rpm, "https://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm"
+
 
       default_config :chef_bootstrap_url, "https://www.getchef.com/chef/install.sh"
 
@@ -56,9 +60,7 @@ module Kitchen
       default_config :salt_copy_filter, []
       default_config :is_file_root, false
 
-      default_config :dependencies, []
-      default_config :vendor_path, ""
-      default_config :omnibus_cachier, false
+      default_config :dependancies, []
 
       # salt-call version that supports the undocumented --retcode-passthrough command
       RETCODE_VERSION = '0.17.5'
@@ -83,7 +85,7 @@ module Kitchen
         salt_apt_repo = config[:salt_apt_repo]
         salt_apt_repo_key = config[:salt_apt_repo_key]
 
-        omnibus_download_dir = config[:omnibus_cachier] ? "/tmp/vagrant-cache/omnibus_chef" : "/tmp"
+        salt_yum_rpm = config[:salt_yum_rpm]
 
         <<-INSTALL
           sh -c '
@@ -108,6 +110,10 @@ module Kitchen
 
             #{sudo('apt-get')} update
             #{sudo('apt-get')} install -y salt-minion
+          elif [ -z "${SALT_VERSION}" -a "#{salt_install}" = "yum" ]
+          then
+            #{sudo('rpm')} -ivh #{salt_yum_rpm}
+            #{sudo('yum')} -y install salt-minion
           fi
 
           # check again, now that an install of some form should have happened
@@ -120,8 +126,14 @@ module Kitchen
             echo "salt_url = #{salt_url}"
             echo "bootstrap_options = #{bootstrap_options}"
             echo "salt_version = #{salt_version}"
-            echo "salt_apt_repo = #{salt_apt_repo}"
-            echo "salt_apt_repo_key = #{salt_apt_repo_key}"
+            if [ "#{salt_install}" = "apt" ]
+            then
+              echo "salt_apt_repo = #{salt_apt_repo}"
+              echo "salt_apt_repo_key = #{salt_apt_repo_key}"
+            elif [ "#{salt_install}" = "yum" ]
+            then
+              echo "salt_yum_rpm = #{salt_yum_rpm}"
+            fi
             exit 2
           elif [ "${SALT_VERSION}" = "#{salt_version}" -o "#{salt_version}" = "latest" ]
           then
@@ -134,15 +146,15 @@ module Kitchen
             exit 2
           fi
 
+          # install chef omnibus so that busser works :(
+          # TODO: work out how to install enough ruby
+          # and set busser: { :ruby_bindir => '/usr/bin/ruby' } so that we dont need the
+          # whole chef client
           if [ ! -d "/opt/chef" ]
           then
             echo "-----> Installing Chef Omnibus"
-            mkdir -p #{omnibus_download_dir}
-            if [ ! -x #{omnibus_download_dir}/install.sh ]
-            then
-              do_download #{chef_url} #{omnibus_download_dir}/install.sh
-            fi
-            #{sudo('sh')} #{omnibus_download_dir}/install.sh -d #{omnibus_download_dir}
+            do_download #{chef_url} /tmp/install.sh
+            #{sudo('sh')} /tmp/install.sh
           fi
 
           '
@@ -161,17 +173,7 @@ module Kitchen
         else
           prepare_formula config[:kitchen_root], config[:formula]
 
-          deps = if Pathname.new(config[:vendor_path]).absolute?
-            Dir["#{config[:vendor_path]}/*"]
-          else
-            Dir["#{config[:kitchen_root]}/#{config[:vendor_path]}/*"]
-          end
-
-          deps.each do |d|
-            prepare_formula "#{config[:kitchen_root]}/#{config[:vendor_path]}", File.basename(d)
-          end
-
-          config[:dependencies].each do |formula|
+          config[:dependancies].each do |formula|
             prepare_formula formula[:path], formula[:name]
           end
         end
@@ -430,9 +432,6 @@ module Kitchen
                 Find.prune
               end
               FileUtils.mkdir target unless File.exists? target
-              if File.symlink? source
-                FileUtils.cp_r "#{source}/.", target
-              end
             else
               FileUtils.copy source, target
             end
