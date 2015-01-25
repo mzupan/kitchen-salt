@@ -90,11 +90,8 @@ module Kitchen
         <<-INSTALL
           sh -c '
           #{Util.shell_helpers}
-
           # what version of salt is installed?
           SALT_VERSION=`salt-call --version | cut -d " " -f 2`
-
-
           if [ -z "${SALT_VERSION}" -a "#{salt_install}" = "bootstrap" ]
           then
             do_download #{salt_url} /tmp/bootstrap-salt.sh
@@ -102,12 +99,9 @@ module Kitchen
           elif [ -z "${SALT_VERSION}" -a "#{salt_install}" = "apt" ]
           then
             . /etc/lsb-release
-
             echo "deb #{salt_apt_repo}/salt-#{salt_version} ${DISTRIB_CODENAME} main" | #{sudo('tee')} /etc/apt/sources.list.d/salt-#{salt_version}.list
-
             do_download #{salt_apt_repo_key} /tmp/repo.key
             #{sudo('apt-key')} add /tmp/repo.key
-
             #{sudo('apt-get')} update
             #{sudo('apt-get')} install -y salt-minion
           elif [ -z "${SALT_VERSION}" -a "#{salt_install}" = "yum" ]
@@ -115,10 +109,8 @@ module Kitchen
             #{sudo('rpm')} -ivh #{salt_yum_rpm}
             #{sudo('yum')} -y install salt-minion
           fi
-
           # check again, now that an install of some form should have happened
           SALT_VERSION=`salt-call --version | cut -d " " -f 2`
-
           if [ -z "${SALT_VERSION}" ]
           then
             echo "No salt-minion installed, install must have failed!!"
@@ -145,7 +137,6 @@ module Kitchen
             echo "You asked for #{salt_version} and you have got ${SALT_VERSION} installed, dunno how to fix that, sorry!"
             exit 2
           fi
-
           # install chef omnibus so that busser works :(
           # TODO: work out how to install enough ruby
           # and set busser: { :ruby_bindir => '/usr/bin/ruby' } so that we dont need the
@@ -156,7 +147,6 @@ module Kitchen
             do_download #{chef_url} /tmp/install.sh
             #{sudo('sh')} /tmp/install.sh
           fi
-
           '
         INSTALL
       end
@@ -174,7 +164,7 @@ module Kitchen
           prepare_formula config[:kitchen_root], config[:formula]
 
           config[:dependancies].each do |formula|
-            prepare_formula formula[:path], formula[:name]
+            prepare_formula config[:kitchen_root], formula
           end
         end
       end
@@ -237,13 +227,10 @@ module Kitchen
 
         minion_config_content = <<-MINION_CONFIG.gsub(/^ {10}/, '')
           state_top: top.sls
-
           file_client: local
-
           file_roots:
            base:
              - #{File.join(config[:root_path], config[:salt_file_root])}
-
           pillar_roots:
            base:
              - #{File.join(config[:root_path], config[:salt_pillar_root])}
@@ -370,8 +357,13 @@ module Kitchen
       end
 
       def prepare_formula(path, formula)
+        #
+        # checking if my path+formula is there.. if not change the path to ../ as 
+        # the .kitchen file might be in the formula itself
+        info("prepping formula now: #{formula}")
+        path = File.dirname path unless File.exists?(path + formula)
+
         info("Preparing formula: #{formula} from #{path}")
-        debug("Using config #{config}")
 
         formula_dir = File.join(sandbox_path, config[:salt_file_root], formula)
         FileUtils.mkdir_p(formula_dir)
@@ -395,14 +387,14 @@ module Kitchen
 
       def prepare_state_collection
         info("Preparing state collection")
-        debug("Using config #{config}")
+        info("Using config #{config}")
 
         if config[:collection_name].nil? and config[:formula].nil?
           info("neither collection_name or formula have been set, assuming this is a pre-built collection")
           config[:collection_name] = ""
         else
           if config[:collection_name].nil?
-            debug("collection_name not set, using #{config[:formula]}")
+            info("collection_name not set, using #{config[:formula]}")
             config[:collection_name] = config[:formula]
           end
         end
